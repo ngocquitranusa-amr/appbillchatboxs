@@ -1,10 +1,11 @@
 import streamlit as st
-st.image("IMG_5982.png", use_container_width=True)
 from fpdf import FPDF
 from io import BytesIO
 from datetime import datetime
 import os
-import re
+import json
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 
 # =========================================================
@@ -16,6 +17,8 @@ st.set_page_config(
     page_icon="🧋",
     layout="centered"
 )
+
+st.image("IMG_5982.png", use_container_width=True)
 
 
 # =========================================================
@@ -498,3 +501,96 @@ if st.button(
 
                 st.write(
                     "**Topping:** Không")
+
+
+            # Hiển thị mức đường, mức đá và hoàn tất phần hóa đơn
+            st.write(f"**Mức đường:** {item['sugar']}  |  **Mức đá:** {item['ice']}")
+
+        st.divider()
+        st.subheader(f"💰 TỔNG THANH TOÁN: {format_money(total_money)}")
+
+        pdf_data = create_pdf(customer_name, order_items, total_money, invoice_number)
+        st.download_button(
+            "📄 TẢI HÓA ĐƠN PDF",
+            data=pdf_data,
+            file_name=f"hoa_don_{invoice_number}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+
+# =========================================================
+# CHATBOT TƯ VẤN MENU
+# =========================================================
+st.divider()
+st.subheader("💬 Chatbot tư vấn trà sữa")
+st.caption("Hỏi chatbot về món, giá, topping hoặc nhờ gợi ý đồ uống.")
+
+# Chỉ giữ hội thoại chatbot trong session hiện tại.
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = []
+
+for message in st.session_state.chat_messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+user_prompt = st.chat_input("Ví dụ: Món nào ít ngọt, giá dưới 35.000đ?")
+if user_prompt:
+    st.session_state.chat_messages.append({"role": "user", "content": user_prompt})
+    with st.chat_message("user"):
+        st.markdown(user_prompt)
+
+    # Lấy khóa từ .streamlit/secrets.toml, không ghi khóa vào mã nguồn.
+    try:
+        api_key = st.secrets["OPENROUTER_API_KEY"]
+    except Exception:
+        api_key = None
+
+    if not api_key:
+        reply = (
+            "Chưa cấu hình API key. Tạo file `.streamlit/secrets.toml` cạnh `app.py` "
+            "với nội dung `OPENROUTER_API_KEY = \"khóa_mới_của_bạn\"`, rồi chạy lại ứng dụng."
+        )
+    else:
+        menu_text = "\n".join(f"- {name}: {price:,} VNĐ" for name, price in MENU.items())
+        toppings_text = "\n".join(f"- {name}: {price:,} VNĐ" for name, price in TOPPINGS.items())
+        system_prompt = (
+            "Bạn là nhân viên tư vấn thân thiện của quán trà sữa. Trả lời bằng tiếng Việt ngắn gọn. "
+            "Chỉ tư vấn từ menu và giá bên dưới; không tự bịa món, giá hay thông tin sức khỏe. "
+            "Nếu khách hỏi ngoài menu, hãy nói rõ và gợi ý món gần nhất.\n\n"
+            f"MENU:\n{menu_text}\n\nTOPPING (giá cộng thêm cho mỗi ly):\n{toppings_text}\n\n"
+            "Mức đường/đá có thể chọn: 100%, 70%, 0%."
+        )
+        payload = {
+            "model": "openrouter/auto",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *st.session_state.chat_messages[-12:]
+            ],
+            "temperature": 0.7,
+            "max_tokens": 500
+        }
+        request = Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost:8501",
+                "X-Title": "Chatbot tu van tra sua"
+            },
+            method="POST"
+        )
+        try:
+            with urlopen(request, timeout=45) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            reply = result["choices"][0]["message"]["content"].strip()
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")[:500]
+            reply = f"OpenRouter báo lỗi {error.code}. Kiểm tra API key/tài khoản rồi thử lại.\n\nChi tiết: {detail}"
+        except (URLError, TimeoutError, KeyError, IndexError, ValueError) as error:
+            reply = f"Chưa nhận được câu trả lời từ chatbot. Bạn thử lại nhé. ({error})"
+
+    st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+    with st.chat_message("assistant"):
+        st.markdown(reply)

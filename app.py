@@ -4,6 +4,7 @@ from io import BytesIO
 from datetime import datetime
 import os
 import json
+import unicodedata
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -80,6 +81,17 @@ def create_invoice_number():
 # HÀM TẠO FILE PDF
 # =========================================================
 
+def pdf_safe_text(value):
+    """Chuyển chữ tiếng Việt thành ASCII để font Helvetica mặc định đọc được."""
+    value = str(value).replace("Đ", "D").replace("đ", "d")
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(
+        character
+        for character in normalized
+        if not unicodedata.combining(character) and ord(character) < 128
+    )
+
+
 def create_pdf(customer_name, order_items, total_money, invoice_number):
 
     pdf = FPDF()
@@ -116,6 +128,8 @@ def create_pdf(customer_name, order_items, total_money, invoice_number):
     else:
         normal_font = "Helvetica"
         bold_font = "Helvetica"
+        # Helvetica mặc định không hỗ trợ dấu tiếng Việt.
+        customer_name = pdf_safe_text(customer_name)
 
     # =====================================================
     # TIÊU ĐỀ
@@ -193,12 +207,12 @@ def create_pdf(customer_name, order_items, total_money, invoice_number):
 
     for item in order_items:
 
-        drink_name = item["drink"]
+        drink_name = item["drink"] if font_path else pdf_safe_text(item["drink"])
         quantity = item["quantity"]
         price = item["price"]
-        toppings = item["toppings"]
-        sugar = item["sugar"]
-        ice = item["ice"]
+        toppings = item["toppings"] if font_path else [pdf_safe_text(topping) for topping in item["toppings"]]
+        sugar = item["sugar"] if font_path else pdf_safe_text(item["sugar"])
+        ice = item["ice"] if font_path else pdf_safe_text(item["ice"])
         subtotal = item["subtotal"]
 
         pdf.cell(
@@ -266,7 +280,7 @@ def create_pdf(customer_name, order_items, total_money, invoice_number):
     pdf.cell(
         0,
         10,
-        f"TONG THANH TOAN: {total_money:,.0f} VNĐ",
+        f"TONG THANH TOAN: {total_money:,.0f} VND",
         align="R"
     )
 
